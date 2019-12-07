@@ -24,6 +24,7 @@ use Monolog\Util;
 abstract class AbstractHandler extends AbstractProcessingHandler
 {
     protected $host = null;
+    protected $ch = null;
     protected $endpoint = 'log/v1';
     protected $licenseKey;
     protected $protocol = 'https://';
@@ -81,16 +82,26 @@ abstract class AbstractHandler extends AbstractProcessingHandler
      */
     protected function getCurlHandler()
     {
-        $host = is_null($this->host)
-              ? self::getDefaultHost($this->licenseKey)
-              : $this->host;
+        if (is_null($this->ch)) {
+            $host = is_null($this->host)
+                  ? self::getDefaultHost($this->licenseKey)
+                  : $this->host;
 
-        $url = "{$this->protocol}{$host}/{$this->endpoint}";
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        return $ch;
+            $url = "{$this->protocol}{$host}/{$this->endpoint}";
+            $ch = curl_init();
+            $headers = array(
+                'Content-Type: application/json',
+                'X-License-Key: ' . $this->licenseKey
+            );
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+            curl_setopt($ch, CURLOPT_URL, $url);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            $this->ch = $ch;
+            return $this->ch;
+        } else {
+            return $this->ch;
+        }
     }
 
     /**
@@ -104,13 +115,7 @@ abstract class AbstractHandler extends AbstractProcessingHandler
     {
         $ch = $this->getCurlHandler();
 
-        $headers = array(
-            'Content-Type: application/json',
-            'X-License-Key: ' . $this->licenseKey
-        );
-
         curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         Curl\Util::execute($ch, 5, false);
     }
 
@@ -125,15 +130,9 @@ abstract class AbstractHandler extends AbstractProcessingHandler
     {
         $ch = $this->getCurlHandler();
 
-        $headers = array(
-            'Content-Type: application/json',
-            'X-License-Key: ' . $this->licenseKey
-        );
-
         $postData = '[{"logs":' . $data . '}]';
 
         curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         Curl\Util::execute($ch, 5, false);
     }
 
