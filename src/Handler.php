@@ -14,17 +14,15 @@
 namespace NewRelic\Monolog\Enricher;
 
 use Monolog\Formatter\FormatterInterface;
-use Monolog\Handler\Curl;
 use Monolog\Handler\AbstractProcessingHandler;
 use Monolog\Handler\HandlerInterface;
 use Monolog\Handler\MissingExtensionException;
 use Monolog\Logger;
-use Monolog\Util;
 
 abstract class AbstractHandler extends AbstractProcessingHandler
 {
     protected $host = null;
-    protected $ch = null;
+    protected $mh;
     protected $endpoint = 'log/v1';
     protected $licenseKey;
     protected $protocol = 'https://';
@@ -48,6 +46,7 @@ abstract class AbstractHandler extends AbstractProcessingHandler
             $this->licenseKey = "NO_LICENSE_KEY_FOUND";
         }
 
+        $this->mh = curl_multi_init();
         parent::__construct($level, $bubble);
     }
 
@@ -82,26 +81,21 @@ abstract class AbstractHandler extends AbstractProcessingHandler
      */
     protected function getCurlHandler()
     {
-        if (is_null($this->ch)) {
-            $host = is_null($this->host)
-                  ? self::getDefaultHost($this->licenseKey)
-                  : $this->host;
+        $host = is_null($this->host)
+              ? self::getDefaultHost($this->licenseKey)
+              : $this->host;
 
-            $url = "{$this->protocol}{$host}/{$this->endpoint}";
-            $ch = curl_init();
-            $headers = array(
-                'Content-Type: application/json',
-                'X-License-Key: ' . $this->licenseKey
-            );
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch, CURLOPT_URL, $url);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            $this->ch = $ch;
-            return $this->ch;
-        } else {
-            return $this->ch;
-        }
+        $url = "{$this->protocol}{$host}/{$this->endpoint}";
+        $ch = curl_init();
+        $headers = array(
+            'Content-Type: application/json',
+            'X-License-Key: ' . $this->licenseKey
+        );
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        return $ch;
     }
 
     /**
@@ -116,7 +110,8 @@ abstract class AbstractHandler extends AbstractProcessingHandler
         $ch = $this->getCurlHandler();
 
         curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-        Curl\Util::execute($ch, 5, false);
+        curl_multi_add_handle($this->mh, $ch);
+        curl_multi_exec($this->mh, $unused);
     }
 
     /**
@@ -133,7 +128,8 @@ abstract class AbstractHandler extends AbstractProcessingHandler
         $postData = '[{"logs":' . $data . '}]';
 
         curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-        Curl\Util::execute($ch, 5, false);
+        curl_multi_add_handle($this->mh, $ch);
+        curl_multi_exec($this->mh, $unused);
     }
 
     /**
@@ -160,6 +156,18 @@ abstract class AbstractHandler extends AbstractProcessingHandler
         }
 
         return "log-api$region.newrelic.com";
+    }
+
+    public function __destruct()
+    {
+        do {
+            $status = curl_multi_exec($this->mh, $active);
+            if ($active) {
+                // Wait a short time for more activity
+                curl_multi_select($this->mh);
+            }
+        } while ($active && $status == CURLM_OK);
+        parent::__destruct();
     }
 }
 
